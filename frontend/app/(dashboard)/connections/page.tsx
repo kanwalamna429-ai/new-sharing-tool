@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { Header } from "@/components/layout/header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -65,6 +65,20 @@ function platformClass(id: string) {
   return `${light} ${dark}`
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapApiToLocal(data: any): LocalConnection {
+  return {
+    id:             data.id,
+    platform:       data.platform as AllPlatformId,
+    accountName:    data.account_name ?? data.accountName ?? "",
+    accountHandle:  data.account_handle ?? data.accountHandle ?? "",
+    instanceUrl:    data.instance_url ?? data.instanceUrl ?? undefined,
+    status:         (data.status ?? "connected") as LocalConnection["status"],
+    connectedAt:    data.connected_at ?? data.connectedAt ?? new Date().toISOString(),
+    postsPublished: data.posts_published ?? data.postsPublished ?? 0,
+  }
+}
+
 function StatusBadge({ status }: { status: LocalConnection["status"] }) {
   if (status === "connected") {
     return (
@@ -106,13 +120,13 @@ interface CredentialDialogProps {
 }
 
 function CredentialDialog({ platform, open, initialData, onClose, onSave }: CredentialDialogProps) {
-  const [values, setValues]       = useState<Record<string, string>>({})
-  const [accountName, setAccountName] = useState(initialData?.accountName ?? "")
+  const [values, setValues]               = useState<Record<string, string>>({})
+  const [accountName, setAccountName]     = useState(initialData?.accountName ?? "")
   const [accountHandle, setAccountHandle] = useState(initialData?.accountHandle ?? "")
-  const [instanceUrl, setInstanceUrl] = useState(initialData?.instanceUrl ?? "")
-  const [revealed, setRevealed]   = useState<Record<string, boolean>>({})
-  const [saving, setSaving]       = useState(false)
-  const [errors, setErrors]       = useState<Record<string, string>>({})
+  const [instanceUrl, setInstanceUrl]     = useState(initialData?.instanceUrl ?? "")
+  const [revealed, setRevealed]           = useState<Record<string, boolean>>({})
+  const [saving, setSaving]               = useState(false)
+  const [errors, setErrors]               = useState<Record<string, string>>({})
 
   const reset = useCallback(() => {
     setValues({})
@@ -151,23 +165,35 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
     if (!validate()) return
     setSaving(true)
 
-    // Simulate async connection test
-    await new Promise((r) => setTimeout(r, 800))
+    try {
+      const res = await fetch("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id:            initialData?.id,
+          platform:      platform.id,
+          accountName:   accountName.trim() || accountHandle.trim(),
+          accountHandle: accountHandle.trim(),
+          instanceUrl:   instanceUrl.trim() || undefined,
+          credentials:   values,
+        }),
+      })
 
-    const connection: LocalConnection = {
-      id:            initialData?.id ?? `conn_${Date.now()}`,
-      platform:      platform.id,
-      accountName:   accountName.trim() || accountHandle.trim(),
-      accountHandle: accountHandle.trim(),
-      instanceUrl:   instanceUrl.trim() || undefined,
-      status:        "connected",
-      connectedAt:   new Date().toISOString(),
-      postsPublished: initialData?.postsPublished ?? 0,
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setErrors({ accountHandle: body.error ?? "Failed to save connection" })
+        setSaving(false)
+        return
+      }
+
+      const { connection: saved } = await res.json()
+      setSaving(false)
+      reset()
+      onSave(mapApiToLocal(saved))
+    } catch {
+      setErrors({ accountHandle: "Network error — please try again" })
+      setSaving(false)
     }
-
-    setSaving(false)
-    reset()
-    onSave(connection)
   }
 
   if (!platform) return null
@@ -413,6 +439,7 @@ function RemoveDialog({ connection, onClose, onConfirm }: RemoveDialogProps) {
 
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<LocalConnection[]>([])
+  const [loadingConnections, setLoadingConnections] = useState(true)
 
   // Dialog state
   const [pickerOpen,   setPickerOpen]   = useState(false)
@@ -421,13 +448,22 @@ export default function ConnectionsPage() {
   const [testingId,    setTestingId]    = useState<string | null>(null)
   const [testResult,   setTestResult]   = useState<Record<string, "ok" | "fail">>({})
 
+  // Load connections from API on mount
+  useEffect(() => {
+    fetch("/api/connections")
+      .then((r) => r.json())
+      .then(({ connections: data }) => {
+        if (Array.isArray(data)) setConnections(data.map(mapApiToLocal))
+      })
+      .catch((err) => console.error("[connections] load failed:", err))
+      .finally(() => setLoadingConnections(false))
+  }, [])
+
   const connected = connections.filter((c) => c.status === "connected").length
   const errored   = connections.filter((c) => c.status === "error").length
-
-  // All platform IDs already connected
   const connectedPlatformIds = connections.map((c) => c.platform)
 
-  // Add or update a connection
+  // Add or update a connection (API call happens inside CredentialDialog)
   const handleSave = useCallback((conn: LocalConnection) => {
     setConnections((prev) => {
       const exists = prev.findIndex((c) => c.id === conn.id)
@@ -442,32 +478,37 @@ export default function ConnectionsPage() {
   }, [])
 
   // Remove a connection
-  const handleRemove = useCallback((id: string) => {
+  const handleRemove = useCallback(async (id: string) => {
     setConnections((prev) => prev.filter((c) => c.id !== id))
+    try {
+      await fetch(`/api/connections/${id}`, { method: "DELETE" })
+    } catch (err) {
+      console.error("[connections] remove failed:", err)
+    }
   }, [])
 
-  // Test connection
+  // Test connection (simulated ping)
   async function handleTest(conn: LocalConnection) {
     setTestingId(conn.id)
     await new Promise((r) => setTimeout(r, 1200))
     setTestResult((prev) => ({ ...prev, [conn.id]: "ok" }))
     setTestingId(null)
-    setTimeout(() => setTestResult((prev) => { const n = { ...prev }; delete n[conn.id]; return n }), 3000)
+    setTimeout(
+      () => setTestResult((prev) => { const n = { ...prev }; delete n[conn.id]; return n }),
+      3000,
+    )
   }
 
-  // Open update dialog
   function handleUpdate(conn: LocalConnection) {
     const platform = PLATFORM_REGISTRY.find((p) => p.id === conn.platform)
     if (platform) setCredDialog({ platform, existing: conn })
   }
 
-  // Platform picker → credential form
   function handlePickerSelect(platform: PlatformConfig) {
     setPickerOpen(false)
     setCredDialog({ platform })
   }
 
-  // Connect button on available platform card
   function handlePlatformConnect(platform: PlatformConfig) {
     setCredDialog({ platform })
   }
@@ -529,14 +570,18 @@ export default function ConnectionsPage() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            {connections.length === 0 ? (
+            {loadingConnections ? (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                Loading connections…
+              </div>
+            ) : connections.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
                   <Plug2 className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <p className="text-sm font-medium text-foreground">No connections yet</p>
                 <p className="text-xs text-muted-foreground mt-1 max-w-xs">
-                  Add your first platform connection to start publishing. Click "Add Platform" above or connect from the list below.
+                  Add your first platform connection to start publishing. Click &quot;Add Platform&quot; above or connect from the list below.
                 </p>
               </div>
             ) : (
@@ -638,8 +683,8 @@ export default function ConnectionsPage() {
 
         {/* Available platforms — by category */}
         {([
-          { label: CATEGORY_LABELS.social,      platforms: socialPlatforms },
-          { label: CATEGORY_LABELS.publishing,  platforms: publishingPlatforms },
+          { label: CATEGORY_LABELS.social,      platforms: socialPlatforms      },
+          { label: CATEGORY_LABELS.publishing,  platforms: publishingPlatforms  },
           { label: CATEGORY_LABELS.bookmarking, platforms: bookmarkingPlatforms },
         ] as const).map(({ label, platforms }) => (
           <Card key={label}>
@@ -649,7 +694,7 @@ export default function ConnectionsPage() {
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {platforms.map((platform) => {
-                  const existing   = connections.find((c) => c.platform === platform.id)
+                  const existing    = connections.find((c) => c.platform === platform.id)
                   const isConnected = existing?.status === "connected"
                   const isError     = existing?.status === "error"
                   return (

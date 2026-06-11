@@ -94,13 +94,28 @@ By default Supabase uses its own rate-limited SMTP relay (good enough for testin
 2. Enable **Custom SMTP** and enter credentials from your email provider (Resend, SendGrid, Postmark, etc.)
 3. Set **Sender email** and **Sender name**
 
-### 2g. Row Level Security
+### 2g. Run Database Migrations
 
-PostFlow's tables must have RLS enabled. When you run the SQL migrations:
+PostFlow requires four tables in Supabase. **You must run the migration before the app will save any data.**
 
-1. Go to **SQL Editor** in Supabase
-2. Run your migration files in order (see `supabase/migrations/` if present)
-3. Verify RLS is enabled on each table: **Table Editor** → select table → **RLS** tab → should show **Enabled**
+1. Go to **SQL Editor** in your Supabase project
+2. Click **New query**
+3. Copy the entire contents of `supabase/migrations/001_initial.sql` from this repo and paste it in
+4. Click **Run** (or press `Ctrl+Enter`)
+5. You should see `Success. No rows returned` — that means all four tables and RLS policies were created
+
+**Tables created by the migration:**
+
+| Table | Purpose |
+|-------|---------|
+| `campaign_urls` | URL library entries (and campaign-specific URLs) |
+| `campaigns` | Campaign records with schedule config |
+| `platform_connections` | Connected accounts (credentials encrypted at rest) |
+| `system_logs` | Publish event history |
+
+6. Verify RLS is enabled on each table: **Table Editor** → select table → **RLS** tab → should show **Enabled**
+
+> If you see `already exists` errors, the migration has been run before — that is fine, you can ignore them or use `IF NOT EXISTS` (already included).
 
 ---
 

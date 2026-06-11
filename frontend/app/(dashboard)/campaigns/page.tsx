@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator"
 import { BulkUrlUpload } from "@/components/url/bulk-url-upload"
 import { useUrlStore } from "@/lib/url-store"
+import { useCampaigns } from "@/lib/campaigns-store"
 import { type Campaign, type CampaignStatus, type UrlEntry } from "@/lib/mock-data"
 import {
   PLATFORM_REGISTRY,
@@ -132,8 +133,8 @@ interface ActivationNotice {
 
 export default function CampaignsPage() {
   const { urls: libraryUrls } = useUrlStore()
+  const { campaigns, createCampaign, updateCampaignStatus, deleteCampaign } = useCampaigns()
 
-  const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showForm, setShowForm]   = useState(false)
   const [form, setForm]           = useState<FormState>(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
@@ -144,7 +145,6 @@ export default function CampaignsPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [page, setPage]                 = useState(1)
 
-  // total URLs selected for the form (library picks + campaign-only)
   const totalUrlCount = form.urlIds.length + form.campaignUrls.length
 
   // ---- Filtering & pagination ----
@@ -170,7 +170,6 @@ export default function CampaignsPage() {
     return previewSchedule(totalUrlCount, form.platforms.length, new Date(form.startDate + "T00:00:00"), freq)
   }, [totalUrlCount, form.platforms.length, form.frequencyKey, form.startDate])
 
-  // ---- Toggle platform in form ----
   const togglePlatform = useCallback((id: string) => {
     setForm((f) => ({
       ...f,
@@ -180,7 +179,6 @@ export default function CampaignsPage() {
     }))
   }, [])
 
-  // ---- Toggle library URL in form ----
   const toggleUrl = useCallback((id: string) => {
     setForm((f) => ({
       ...f,
@@ -190,7 +188,6 @@ export default function CampaignsPage() {
     }))
   }, [])
 
-  // ---- Add campaign-only URLs ----
   const addCampaignUrls = useCallback((entries: UrlEntry[]) => {
     setForm((f) => ({
       ...f,
@@ -198,7 +195,6 @@ export default function CampaignsPage() {
     }))
   }, [])
 
-  // ---- Remove a single campaign-only URL ----
   const removeCampaignUrl = useCallback((id: string) => {
     setForm((f) => ({
       ...f,
@@ -206,21 +202,20 @@ export default function CampaignsPage() {
     }))
   }, [])
 
-  // ---- Clear all campaign-only URLs ----
   const clearCampaignUrls = useCallback(() => {
     setForm((f) => ({ ...f, campaignUrls: [] }))
   }, [])
 
   // ---- Submit new campaign ----
-  function handleCreateCampaign(activateAfter = false) {
+  async function handleCreateCampaign(activateAfter = false) {
     if (!form.name.trim()) { setFormError("Campaign name is required."); return }
     if (form.platforms.length === 0) { setFormError("Select at least one platform."); return }
     if (!form.startDate) { setFormError("Start date is required."); return }
     setFormError(null)
 
     const freq = parseFrequencyKey(form.frequencyKey)
-    const newCampaign: Campaign = {
-      id:             `c${Date.now()}`,
+
+    const campaign = await createCampaign({
       name:           form.name.trim(),
       description:    form.description.trim() || undefined,
       status:         "draft",
@@ -234,16 +229,14 @@ export default function CampaignsPage() {
       frequency:      frequencyLabel(freq),
       timezone:       form.timezone,
       urlCount:       totalUrlCount,
-    }
-    setCampaigns((prev) => [newCampaign, ...prev])
+      urlIds:         form.urlIds,
+    })
 
     if (activateAfter && schedulePreview) {
       const preview = schedulePreview
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === newCampaign.id ? { ...c, status: "active" as CampaignStatus } : c)
-      )
+      await updateCampaignStatus(campaign.id, "active")
       setNotice({
-        campaignName: newCampaign.name,
+        campaignName: campaign.name,
         totalPosts:   preview.totalSlots,
         firstDate:    preview.firstPublishAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
         lastDate:     preview.lastPublishAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
@@ -256,28 +249,26 @@ export default function CampaignsPage() {
   }
 
   // ---- Status transitions ----
-  function handleAction(campaignId: string, action: string) {
+  async function handleAction(campaignId: string, action: string) {
     const campaign = campaigns.find((c) => c.id === campaignId)
     if (!campaign) return
 
     if (action === "activate" || action === "resume") {
-      const freq = campaign.frequency
+      const freqMatch = campaign.frequency
         ? FREQUENCY_PRESETS.find((p) => frequencyLabel({ type: p.type, value: p.value }) === campaign.frequency)
         : null
-      const freqObj: CampaignFrequency = freq
-        ? { type: freq.type, value: freq.value }
+      const freqObj: CampaignFrequency = freqMatch
+        ? { type: freqMatch.type, value: freqMatch.value }
         : { type: "daily", value: 1 }
 
-      const urlCount = campaign.urlCount ?? 0
+      const urlCount     = campaign.urlCount ?? 0
       const platformCount = campaign.platforms.length
-      const startDate = campaign.startDate
+      const startDate    = campaign.startDate
         ? new Date(campaign.startDate + "T00:00:00")
         : new Date()
       const preview = previewSchedule(urlCount || 1, platformCount, startDate, freqObj)
 
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === campaignId ? { ...c, status: "active" as CampaignStatus } : c)
-      )
+      await updateCampaignStatus(campaignId, "active")
       setNotice({
         campaignName: campaign.name,
         totalPosts:   preview.totalSlots,
@@ -285,24 +276,17 @@ export default function CampaignsPage() {
         lastDate:     preview.lastPublishAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
       })
       setTimeout(() => setNotice(null), 6000)
+
     } else if (action === "pause") {
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === campaignId ? { ...c, status: "paused" as CampaignStatus, scheduledPosts: 0 } : c)
-      )
+      await updateCampaignStatus(campaignId, "paused", { scheduledPosts: 0 })
     } else if (action === "complete") {
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === campaignId ? { ...c, status: "completed" as CampaignStatus, scheduledPosts: 0 } : c)
-      )
+      await updateCampaignStatus(campaignId, "completed", { scheduledPosts: 0 })
     } else if (action === "archive") {
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === campaignId ? { ...c, status: "archived" as CampaignStatus } : c)
-      )
+      await updateCampaignStatus(campaignId, "archived")
     } else if (action === "restore") {
-      setCampaigns((prev) =>
-        prev.map((c) => c.id === campaignId ? { ...c, status: "draft" as CampaignStatus } : c)
-      )
+      await updateCampaignStatus(campaignId, "draft")
     } else if (action === "delete") {
-      setCampaigns((prev) => prev.filter((c) => c.id !== campaignId))
+      await deleteCampaign(campaignId)
     }
   }
 

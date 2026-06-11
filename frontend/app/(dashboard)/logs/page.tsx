@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { Header } from "@/components/layout/header"
 import { SearchFilter } from "@/components/layout/search-filter"
 import { Pagination } from "@/components/layout/pagination"
@@ -48,31 +48,86 @@ const levelConfig: Record<
 }
 
 const PLATFORM_FILTER_OPTIONS = [
-  { label: "𝕏 Twitter", value: "twitter" },
-  { label: "LinkedIn", value: "linkedin" },
-  { label: "Instagram", value: "instagram" },
-  { label: "Facebook", value: "facebook" },
-  { label: "TikTok", value: "tiktok" },
-  { label: "Bluesky", value: "bluesky" },
-  { label: "Mastodon", value: "mastodon" },
-  { label: "Misskey", value: "misskey" },
-  { label: "Pixelfed", value: "pixelfed" },
-  { label: "Tumblr", value: "tumblr" },
-  { label: "DEV.to", value: "devto" },
-  { label: "Hashnode", value: "hashnode" },
-  { label: "Reddit", value: "reddit" },
-  { label: "Diigo", value: "diigo" },
-  { label: "Raindrop.io", value: "raindrop" },
-  { label: "Pocket", value: "pocket" },
-  { label: "Instapaper", value: "instapaper" },
+  { label: "𝕏 Twitter",   value: "twitter"    },
+  { label: "LinkedIn",    value: "linkedin"   },
+  { label: "Instagram",   value: "instagram"  },
+  { label: "Facebook",    value: "facebook"   },
+  { label: "TikTok",      value: "tiktok"     },
+  { label: "Bluesky",     value: "bluesky"    },
+  { label: "Mastodon",    value: "mastodon"   },
+  { label: "Misskey",     value: "misskey"    },
+  { label: "Pixelfed",    value: "pixelfed"   },
+  { label: "Tumblr",      value: "tumblr"     },
+  { label: "DEV.to",      value: "devto"      },
+  { label: "Hashnode",    value: "hashnode"   },
+  { label: "Reddit",      value: "reddit"     },
+  { label: "Diigo",       value: "diigo"      },
+  { label: "Raindrop.io", value: "raindrop"   },
+  { label: "Pocket",      value: "pocket"     },
+  { label: "Instapaper",  value: "instapaper" },
 ]
 
+function tryGetClient() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createClient } = require("@/lib/supabase/client")
+    return createClient()
+  } catch {
+    return null
+  }
+}
+
 export default function LogsPage() {
-  const [logs] = useState<LogEntry[]>([])
-  const [search, setSearch]             = useState("")
-  const [levelFilter, setLevelFilter]   = useState("all")
+  const [logs, setLogs]                     = useState<LogEntry[]>([])
+  const [loading, setLoading]               = useState(true)
+  const [search, setSearch]                 = useState("")
+  const [levelFilter, setLevelFilter]       = useState("all")
   const [platformFilter, setPlatformFilter] = useState("all")
-  const [page, setPage]                 = useState(1)
+  const [page, setPage]                     = useState(1)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      const supabase = tryGetClient()
+      if (!supabase) { setLoading(false); return }
+
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user || cancelled) { setLoading(false); return }
+
+        const { data, error } = await supabase
+          .from("system_logs")
+          .select("id, level, campaign, platform, message, post_id, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(500)
+
+        if (error) throw error
+
+        if (!cancelled) {
+          setLogs(
+            (data ?? []).map((r) => ({
+              id:        r.id,
+              timestamp: r.created_at,
+              level:     r.level as LogLevel,
+              campaign:  r.campaign,
+              platform:  r.platform,
+              message:   r.message,
+              postId:    r.post_id ?? undefined,
+            }))
+          )
+        }
+      } catch (err) {
+        console.error("[logs] load failed:", err)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
+  }, [])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -103,14 +158,16 @@ export default function LogsPage() {
       <Header title="Publish Logs" />
 
       <main className="flex-1 p-4 lg:p-6 space-y-4">
-        {/* Meta row */}
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
-            {logs.length === 0 ? "No log entries yet" : `${filtered.length} of ${logs.length} entries`}
+            {loading
+              ? "Loading…"
+              : logs.length === 0
+              ? "No log entries yet"
+              : `${filtered.length} of ${logs.length} entries`}
           </p>
         </div>
 
-        {/* Filters */}
         {logs.length > 0 && (
           <SearchFilter
             search={search}
@@ -122,10 +179,10 @@ export default function LogsPage() {
                 onChange: (v) => { setLevelFilter(v); setPage(1) },
                 placeholder: "All levels",
                 options: [
-                  { label: "Success",     value: "success" },
-                  { label: "Error",       value: "error" },
-                  { label: "Warning",     value: "warning" },
-                  { label: "Info",        value: "info" },
+                  { label: "Success", value: "success" },
+                  { label: "Error",   value: "error"   },
+                  { label: "Warning", value: "warning" },
+                  { label: "Info",    value: "info"    },
                 ],
               },
               {
@@ -138,10 +195,11 @@ export default function LogsPage() {
           />
         )}
 
-        {/* Log entries */}
         <Card>
           <CardContent className="p-0">
-            {logs.length === 0 ? (
+            {loading ? (
+              <div className="py-16 text-center text-sm text-muted-foreground">Loading logs…</div>
+            ) : logs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                   <ScrollText className="h-5 w-5 text-muted-foreground" />
@@ -200,9 +258,9 @@ export default function LogsPage() {
 
                       <time className="text-xs text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">
                         {new Date(entry.timestamp).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
+                          month:  "short",
+                          day:    "numeric",
+                          hour:   "2-digit",
                           minute: "2-digit",
                         })}
                       </time>

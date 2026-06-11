@@ -1,0 +1,1 @@
+- [Next.js 16 proxy convention](nextjs16-proxy.md) — middleware.ts renamed to proxy.ts; export must be named `proxy` not `middleware`
