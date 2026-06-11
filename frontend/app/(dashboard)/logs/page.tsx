@@ -107,7 +107,8 @@ export default function LogsPage() {
 
         if (!cancelled) {
           setLogs(
-            (data ?? []).map((r) => ({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (data ?? []).map((r: any) => ({
               id:        r.id,
               timestamp: r.created_at,
               level:     r.level as LogLevel,
