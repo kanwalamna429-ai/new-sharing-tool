@@ -8,6 +8,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { type UrlEntry } from "@/lib/mock-data"
 
 // ---------------------------------------------------------------------------
@@ -17,6 +18,7 @@ import { type UrlEntry } from "@/lib/mock-data"
 interface UrlStore {
   urls: UrlEntry[]
   loading: boolean
+  dbError: string | null
   addUrls: (entries: UrlEntry[]) => Promise<void>
   removeUrl: (id: string) => Promise<void>
   clearAll: () => Promise<void>
@@ -32,19 +34,14 @@ const UrlStoreContext = createContext<UrlStore | null>(null)
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Returns a Supabase browser client, or null if credentials are missing. */
-function tryGetClient() {
+function getSupabase() {
   try {
-    // Dynamic require avoids a hard crash at module load when env vars are absent
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createClient } = require("@/lib/supabase/client")
-    return createClient() as ReturnType<typeof import("@/lib/supabase/client").createClient>
+    return createClient()
   } catch {
     return null
   }
 }
 
-/** Map a campaign_urls DB row → UrlEntry */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToEntry(row: any): UrlEntry {
   return {
@@ -68,17 +65,14 @@ function rowToEntry(row: any): UrlEntry {
 export function UrlStoreProvider({ children }: { children: ReactNode }) {
   const [urls, setUrls]       = useState<UrlEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [dbError, setDbError] = useState<string | null>(null)
 
-  // Load existing URLs from Supabase on mount
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      const supabase = tryGetClient()
-      if (!supabase) {
-        setLoading(false)
-        return
-      }
+      const supabase = getSupabase()
+      if (!supabase) { setLoading(false); return }
 
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -88,14 +82,20 @@ export function UrlStoreProvider({ children }: { children: ReactNode }) {
           .from("campaign_urls")
           .select("id, title, original_url, short_url, clicks, tags, created_at")
           .eq("user_id", user.id)
-          .is("campaign_id", null)       // library URLs have no campaign
+          .is("campaign_id", null)
           .is("deleted_at", null)
           .order("created_at", { ascending: false })
 
-        if (error) throw error
+        if (error) {
+          console.error("[url-store] load error:", error)
+          setDbError(error.message)
+          setLoading(false)
+          return
+        }
         if (!cancelled) setUrls((data ?? []).map(rowToEntry))
       } catch (err) {
         console.error("[url-store] load failed:", err)
+        setDbError(err instanceof Error ? err.message : String(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -105,12 +105,8 @@ export function UrlStoreProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
-  // ------------------------------------------------------------------
-  // addUrls — write to Supabase, update local state
-  // ------------------------------------------------------------------
   const addUrls = useCallback(async (entries: UrlEntry[]) => {
-    const supabase = tryGetClient()
-
+    const supabase = getSupabase()
     if (supabase) {
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -121,53 +117,46 @@ export function UrlStoreProvider({ children }: { children: ReactNode }) {
             campaign_id:  null,
             title:        e.title,
             original_url: e.originalUrl,
-            // slug must be unique; use first 12 chars of UUID
-            slug:         e.id.replace(/-/g, "").slice(0, 12),
-            short_url:    null,          // no real shortener yet
+            slug:         e.id.replace(/-/g, ""),
+            short_url:    null,
             clicks:       0,
             tags:         e.tags,
             is_active:    true,
           }))
-
           const { error } = await supabase.from("campaign_urls").insert(rows)
-          if (error) console.error("[url-store] insert failed:", error.message)
+          if (error) {
+            console.error("[url-store] insert error:", error)
+            setDbError(error.message)
+          } else {
+            setDbError(null)
+          }
         }
       } catch (err) {
         console.error("[url-store] addUrls failed:", err)
+        setDbError(err instanceof Error ? err.message : String(err))
       }
     }
-
-    // Always update local state regardless of DB outcome
     setUrls((prev) => [...entries, ...prev])
   }, [])
 
-  // ------------------------------------------------------------------
-  // removeUrl — soft-delete in Supabase, remove from local state
-  // ------------------------------------------------------------------
   const removeUrl = useCallback(async (id: string) => {
-    const supabase = tryGetClient()
-
+    const supabase = getSupabase()
     if (supabase) {
       try {
         const { error } = await supabase
           .from("campaign_urls")
           .update({ deleted_at: new Date().toISOString() })
           .eq("id", id)
-        if (error) console.error("[url-store] remove failed:", error.message)
+        if (error) console.error("[url-store] remove error:", error)
       } catch (err) {
         console.error("[url-store] removeUrl failed:", err)
       }
     }
-
     setUrls((prev) => prev.filter((u) => u.id !== id))
   }, [])
 
-  // ------------------------------------------------------------------
-  // clearAll — soft-delete all library URLs for this user
-  // ------------------------------------------------------------------
   const clearAll = useCallback(async () => {
-    const supabase = tryGetClient()
-
+    const supabase = getSupabase()
     if (supabase) {
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -178,18 +167,17 @@ export function UrlStoreProvider({ children }: { children: ReactNode }) {
             .eq("user_id", user.id)
             .is("campaign_id", null)
             .is("deleted_at", null)
-          if (error) console.error("[url-store] clearAll failed:", error.message)
+          if (error) console.error("[url-store] clearAll error:", error)
         }
       } catch (err) {
         console.error("[url-store] clearAll failed:", err)
       }
     }
-
     setUrls([])
   }, [])
 
   return (
-    <UrlStoreContext.Provider value={{ urls, loading, addUrls, removeUrl, clearAll }}>
+    <UrlStoreContext.Provider value={{ urls, loading, dbError, addUrls, removeUrl, clearAll }}>
       {children}
     </UrlStoreContext.Provider>
   )

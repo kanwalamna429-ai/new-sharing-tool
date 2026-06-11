@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/layout/header"
 import { SearchFilter } from "@/components/layout/search-filter"
 import { Pagination } from "@/components/layout/pagination"
@@ -67,10 +68,8 @@ const PLATFORM_FILTER_OPTIONS = [
   { label: "Instapaper",  value: "instapaper" },
 ]
 
-function tryGetClient() {
+function getSupabase() {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createClient } = require("@/lib/supabase/client")
     return createClient()
   } catch {
     return null
@@ -89,7 +88,7 @@ export default function LogsPage() {
     let cancelled = false
 
     async function load() {
-      const supabase = tryGetClient()
+      const supabase = getSupabase()
       if (!supabase) { setLoading(false); return }
 
       try {

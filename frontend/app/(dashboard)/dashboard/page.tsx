@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -16,8 +17,9 @@ import {
   AlertTriangle,
   RefreshCw,
   Activity,
+  Database,
 } from "lucide-react"
-import { type Campaign } from "@/lib/mock-data"
+import { type Campaign, type CampaignStatus, type Platform } from "@/lib/mock-data"
 
 interface DashboardStats {
   totalCampaigns: number
@@ -29,10 +31,8 @@ interface DashboardStats {
   successRate: number
 }
 
-function tryGetClient() {
+function getSupabase() {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createClient } = require("@/lib/supabase/client")
     return createClient()
   } catch {
     return null
@@ -67,14 +67,15 @@ const gettingStartedSteps = [
 ]
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [stats, setStats]                     = useState<DashboardStats | null>(null)
   const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([])
-  const [connections, setConnections] = useState(0)
-  const [stepsCompleted, setStepsCompleted] = useState<boolean[]>([false, false, false, false])
+  const [connections, setConnections]         = useState(0)
+  const [stepsCompleted, setStepsCompleted]   = useState<boolean[]>([false, false, false, false])
+  const [migrationNeeded, setMigrationNeeded] = useState(false)
 
   useEffect(() => {
     async function load() {
-      const supabase = tryGetClient()
+      const supabase = getSupabase()
       if (!supabase) return
 
       try {
@@ -101,11 +102,22 @@ export default function DashboardPage() {
           supabase.from("campaign_urls").select("*", { count: "exact", head: true }).eq("user_id", user.id).is("deleted_at", null),
         ])
 
+        // Detect missing tables (PostgreSQL error code 42P01)
+        const firstError = [campaignsRes, connectionsRes, urlsRes].find((r) => r.error)?.error
+        if (firstError) {
+          console.error("[dashboard] DB error:", firstError)
+          const isMissing =
+            firstError.code === "42P01" ||
+            (firstError.message ?? "").toLowerCase().includes("does not exist") ||
+            (firstError.message ?? "").toLowerCase().includes("relation")
+          if (isMissing) { setMigrationNeeded(true); return }
+        }
+
         const totalScheduled = (scheduledRes.data ?? []).reduce(
           (sum: number, c: { scheduled_posts: number }) => sum + (c.scheduled_posts ?? 0), 0
         )
         const published = publishedRes.count ?? 0
-        const failed = failedRes.count ?? 0
+        const failed    = failedRes.count ?? 0
         const connCount = connectionsRes.count ?? 0
 
         setConnections(connCount)
@@ -126,8 +138,8 @@ export default function DashboardPage() {
             id:             r.id as string,
             name:           r.name as string,
             description:    r.description as string | undefined,
-            status:         r.status as string,
-            platforms:      (r.platforms as string[]) ?? [],
+            status:         r.status as CampaignStatus,
+            platforms:      (r.platforms as Platform[]) ?? [],
             scheduledPosts: (r.scheduled_posts as number) ?? 0,
             publishedPosts: (r.published_posts as number) ?? 0,
             failedPosts:    (r.failed_posts as number) ?? 0,
@@ -155,12 +167,12 @@ export default function DashboardPage() {
   }, [])
 
   const statCards = [
-    { title: "Total Campaigns",      value: stats?.totalCampaigns,     icon: Megaphone,    description: "All time",            color: "text-blue-600 dark:text-blue-400",     bg: "bg-blue-50 dark:bg-blue-950/40"     },
+    { title: "Total Campaigns",      value: stats?.totalCampaigns,     icon: Megaphone,    description: "All time",            color: "text-blue-600 dark:text-blue-400",       bg: "bg-blue-50 dark:bg-blue-950/40"       },
     { title: "Active Campaigns",     value: stats?.activeCampaigns,    icon: Play,         description: "Currently running",   color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40" },
-    { title: "Scheduled Posts",      value: stats?.scheduledPosts,     icon: Calendar,     description: "Queued up",           color: "text-violet-600 dark:text-violet-400",  bg: "bg-violet-50 dark:bg-violet-950/40" },
+    { title: "Scheduled Posts",      value: stats?.scheduledPosts,     icon: Calendar,     description: "Queued up",           color: "text-violet-600 dark:text-violet-400",   bg: "bg-violet-50 dark:bg-violet-950/40"   },
     { title: "Published Posts",      value: stats?.publishedPosts,     icon: CheckCircle2, description: "Successfully sent",   color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40" },
-    { title: "Failed Posts",         value: stats?.failedPosts,        icon: XCircle,      description: "Need attention",      color: "text-red-600 dark:text-red-400",        bg: "bg-red-50 dark:bg-red-950/40"       },
-    { title: "Connected Platforms",  value: stats?.connectedPlatforms, icon: Plug2,        description: "Active integrations", color: "text-orange-600 dark:text-orange-400",  bg: "bg-orange-50 dark:bg-orange-950/40" },
+    { title: "Failed Posts",         value: stats?.failedPosts,        icon: XCircle,      description: "Need attention",      color: "text-red-600 dark:text-red-400",         bg: "bg-red-50 dark:bg-red-950/40"         },
+    { title: "Connected Platforms",  value: stats?.connectedPlatforms, icon: Plug2,        description: "Active integrations", color: "text-orange-600 dark:text-orange-400",   bg: "bg-orange-50 dark:bg-orange-950/40"   },
     { title: "Success Rate",         value: stats ? `${stats.successRate}%` : undefined, icon: TrendingUp, description: "Last 30 days", color: "text-teal-600 dark:text-teal-400", bg: "bg-teal-50 dark:bg-teal-950/40" },
   ]
 
@@ -212,6 +224,25 @@ export default function DashboardPage() {
       <Header title="Dashboard" />
 
       <main className="flex-1 p-4 lg:p-6 space-y-6">
+
+        {/* Migration needed banner */}
+        {migrationNeeded && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-4 flex gap-3">
+            <Database className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Database tables not found — run the SQL migration
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Open your Supabase project → SQL Editor → paste and run the contents of{" "}
+                <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 rounded">
+                  supabase/migrations/001_initial.sql
+                </code>{" "}
+                from this repo. Then reload this page.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* KPI Stats */}
         <div>

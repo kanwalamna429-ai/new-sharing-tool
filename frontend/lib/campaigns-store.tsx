@@ -8,6 +8,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { type Campaign, type CampaignStatus } from "@/lib/mock-data"
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ interface CreateCampaignInput extends Omit<Campaign, "id"> {
 interface CampaignsStore {
   campaigns: Campaign[]
   loading: boolean
+  dbError: string | null
   createCampaign: (input: CreateCampaignInput) => Promise<Campaign>
   updateCampaignStatus: (id: string, status: CampaignStatus, extra?: Partial<Campaign>) => Promise<void>
   deleteCampaign: (id: string) => Promise<void>
@@ -36,11 +38,9 @@ const CampaignsContext = createContext<CampaignsStore | null>(null)
 // Helpers
 // ---------------------------------------------------------------------------
 
-function tryGetClient() {
+function getSupabase() {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createClient } = require("@/lib/supabase/client")
-    return createClient() as ReturnType<typeof import("@/lib/supabase/client").createClient>
+    return createClient()
   } catch {
     return null
   }
@@ -73,12 +73,13 @@ function rowToCampaign(row: any): Campaign {
 export function CampaignsProvider({ children }: { children: ReactNode }) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading]     = useState(true)
+  const [dbError, setDbError]     = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      const supabase = tryGetClient()
+      const supabase = getSupabase()
       if (!supabase) { setLoading(false); return }
 
       try {
@@ -91,10 +92,16 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
           .eq("user_id", user.id)
           .order("created_at", { ascending: false })
 
-        if (error) throw error
+        if (error) {
+          console.error("[campaigns-store] load error:", error)
+          setDbError(error.message)
+          setLoading(false)
+          return
+        }
         if (!cancelled) setCampaigns((data ?? []).map(rowToCampaign))
       } catch (err) {
         console.error("[campaigns-store] load failed:", err)
+        setDbError(err instanceof Error ? err.message : String(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -104,14 +111,11 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
-  // ------------------------------------------------------------------
-  // createCampaign
-  // ------------------------------------------------------------------
   const createCampaign = useCallback(async (input: CreateCampaignInput): Promise<Campaign> => {
     const optimisticId = `c${Date.now()}`
     const optimistic: Campaign = { ...input, id: optimisticId }
 
-    const supabase = tryGetClient()
+    const supabase = getSupabase()
     if (supabase) {
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -119,18 +123,18 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
           const { data, error } = await supabase
             .from("campaigns")
             .insert({
-              id:             optimisticId,
-              user_id:        user.id,
-              name:           input.name,
-              description:    input.description || null,
-              status:         input.status,
-              platforms:      input.platforms,
-              url_ids:        input.urlIds ?? [],
-              frequency:      input.frequency || null,
-              start_date:     input.startDate || null,
-              end_date:       input.endDate || null,
-              timezone:       input.timezone || "UTC",
-              url_count:      input.urlCount ?? 0,
+              id:              optimisticId,
+              user_id:         user.id,
+              name:            input.name,
+              description:     input.description || null,
+              status:          input.status,
+              platforms:       input.platforms,
+              url_ids:         input.urlIds ?? [],
+              frequency:       input.frequency || null,
+              start_date:      input.startDate || null,
+              end_date:        input.endDate || null,
+              timezone:        input.timezone || "UTC",
+              url_count:       input.urlCount ?? 0,
               scheduled_posts: 0,
               published_posts: 0,
               failed_posts:    0,
@@ -139,16 +143,19 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
             .select()
             .single()
 
-          if (!error && data) {
+          if (error) {
+            console.error("[campaigns-store] insert error:", error)
+            setDbError(error.message)
+          } else if (data) {
             const saved = rowToCampaign(data)
             setCampaigns((prev) => [saved, ...prev])
+            setDbError(null)
             return saved
-          } else {
-            console.error("[campaigns-store] insert failed:", error?.message)
           }
         }
       } catch (err) {
         console.error("[campaigns-store] createCampaign failed:", err)
+        setDbError(err instanceof Error ? err.message : String(err))
       }
     }
 
@@ -156,9 +163,6 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
     return optimistic
   }, [])
 
-  // ------------------------------------------------------------------
-  // updateCampaignStatus
-  // ------------------------------------------------------------------
   const updateCampaignStatus = useCallback(async (
     id: string,
     status: CampaignStatus,
@@ -167,11 +171,10 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
     setCampaigns((prev) =>
       prev.map((c) => c.id === id ? { ...c, status, ...(extra ?? {}) } : c)
     )
-
-    const supabase = tryGetClient()
+    const supabase = getSupabase()
     if (supabase) {
       try {
-        await supabase
+        const { error } = await supabase
           .from("campaigns")
           .update({
             status,
@@ -179,22 +182,20 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
             ...(extra?.scheduledPosts !== undefined ? { scheduled_posts: extra.scheduledPosts } : {}),
           })
           .eq("id", id)
+        if (error) console.error("[campaigns-store] update error:", error)
       } catch (err) {
         console.error("[campaigns-store] updateCampaignStatus failed:", err)
       }
     }
   }, [])
 
-  // ------------------------------------------------------------------
-  // deleteCampaign
-  // ------------------------------------------------------------------
   const deleteCampaign = useCallback(async (id: string) => {
     setCampaigns((prev) => prev.filter((c) => c.id !== id))
-
-    const supabase = tryGetClient()
+    const supabase = getSupabase()
     if (supabase) {
       try {
-        await supabase.from("campaigns").delete().eq("id", id)
+        const { error } = await supabase.from("campaigns").delete().eq("id", id)
+        if (error) console.error("[campaigns-store] delete error:", error)
       } catch (err) {
         console.error("[campaigns-store] delete failed:", err)
       }
@@ -203,7 +204,7 @@ export function CampaignsProvider({ children }: { children: ReactNode }) {
 
   return (
     <CampaignsContext.Provider
-      value={{ campaigns, loading, createCampaign, updateCampaignStatus, deleteCampaign }}
+      value={{ campaigns, loading, dbError, createCampaign, updateCampaignStatus, deleteCampaign }}
     >
       {children}
     </CampaignsContext.Provider>
