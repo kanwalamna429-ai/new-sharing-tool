@@ -2,6 +2,20 @@ import { NextResponse, type NextRequest } from "next/server"
 import crypto from "node:crypto"
 import { createClient } from "@/lib/supabase/server"
 
+function errMsg(err: unknown): string {
+  if (!err) return "Unknown error"
+  if (typeof err === "string") return err
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>
+    if (typeof e.message === "string") return e.message
+    if (typeof e.msg === "string") return e.msg
+    if (typeof e.details === "string") return e.details
+    if (typeof e.hint === "string") return e.hint
+    try { return JSON.stringify(err) } catch { return "Unknown error" }
+  }
+  return String(err)
+}
+
 function initEncryptionKey(): Buffer | null {
   const raw = process.env.POSTFLOW_ENCRYPTION_KEY
   if (!raw) return null
@@ -67,8 +81,7 @@ export async function GET() {
     return NextResponse.json({ connections: data ?? [] })
   } catch (err) {
     console.error("[api/connections] GET failed:", err)
-    const detail = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: "Internal server error", detail }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error", detail: errMsg(err) }, { status: 500 })
   }
 }
 
@@ -142,7 +155,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ connection: saved })
   } catch (err) {
     console.error("[api/connections] POST failed:", err)
-    const detail = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: "Internal server error", detail }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error", detail: errMsg(err) }, { status: 500 })
   }
 }
