@@ -82,6 +82,23 @@ create table if not exists public.platform_connections (
   unique (user_id, platform, account_handle)
 );
 
+-- Drop the old 5-platform CHECK constraint (added by 001_schema.sql) so all 17 platforms are accepted.
+-- The app validates platform IDs in code, so no DB-level constraint is needed.
+DO $$
+DECLARE v_name TEXT;
+BEGIN
+  SELECT conname INTO v_name
+  FROM pg_constraint
+  WHERE conrelid = 'public.platform_connections'::regclass
+    AND contype = 'c'
+    AND pg_get_constraintdef(oid) ILIKE '%platform IN%';
+  IF v_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE public.platform_connections DROP CONSTRAINT %I', v_name);
+  END IF;
+END;
+$$;
+ALTER TABLE public.platform_connections DROP CONSTRAINT IF EXISTS ck_platform_connections_platform;
+
 -- Patch any missing columns on pre-existing tables
 alter table public.platform_connections add column if not exists account_name          text not null default '';
 alter table public.platform_connections add column if not exists account_handle        text not null default '';
