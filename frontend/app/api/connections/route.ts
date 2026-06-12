@@ -2,17 +2,34 @@ import { NextResponse, type NextRequest } from "next/server"
 import crypto from "node:crypto"
 import { createClient } from "@/lib/supabase/server"
 
-const ENCRYPTION_KEY = process.env.POSTFLOW_ENCRYPTION_KEY
-  ? Buffer.from(process.env.POSTFLOW_ENCRYPTION_KEY, "hex")
-  : null
+function initEncryptionKey(): Buffer | null {
+  const raw = process.env.POSTFLOW_ENCRYPTION_KEY
+  if (!raw) return null
+  const buf = Buffer.from(raw, "hex")
+  if (buf.length !== 32) {
+    console.error(
+      `[connections] POSTFLOW_ENCRYPTION_KEY decoded to ${buf.length} bytes — ` +
+      "must be exactly 64 hex chars (32 bytes). Falling back to base64 storage."
+    )
+    return null
+  }
+  return buf
+}
+
+const ENCRYPTION_KEY = initEncryptionKey()
 
 function encrypt(plain: string): string {
   if (!ENCRYPTION_KEY) return Buffer.from(plain).toString("base64")
-  const iv = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv)
-  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()])
-  const tag = cipher.getAuthTag()
-  return Buffer.concat([iv, tag, encrypted]).toString("base64")
+  try {
+    const iv = crypto.randomBytes(12)
+    const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv)
+    const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()])
+    const tag = cipher.getAuthTag()
+    return Buffer.concat([iv, tag, encrypted]).toString("base64")
+  } catch (err) {
+    console.error("[connections] encrypt error, falling back to base64:", err)
+    return Buffer.from(plain).toString("base64")
+  }
 }
 
 function decrypt(data: string): string {

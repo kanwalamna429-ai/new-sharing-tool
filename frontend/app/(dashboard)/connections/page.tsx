@@ -182,7 +182,8 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        setErrors({ accountHandle: body.error ?? "Failed to save connection" })
+        const msg = body.detail ?? body.error ?? "Failed to save connection"
+        setErrors({ accountHandle: msg })
         setSaving(false)
         return
       }
