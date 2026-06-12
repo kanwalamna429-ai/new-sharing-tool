@@ -82,6 +82,46 @@ create table if not exists public.platform_connections (
   unique (user_id, platform, account_handle)
 );
 
+-- Patch any missing columns on pre-existing tables
+alter table public.platform_connections add column if not exists account_name          text not null default '';
+alter table public.platform_connections add column if not exists account_handle        text not null default '';
+alter table public.platform_connections add column if not exists instance_url          text;
+alter table public.platform_connections add column if not exists status                text not null default 'connected';
+alter table public.platform_connections add column if not exists connected_at          timestamptz not null default now();
+alter table public.platform_connections add column if not exists posts_published       integer not null default 0;
+alter table public.platform_connections add column if not exists credentials_encrypted text;
+alter table public.platform_connections add column if not exists created_at            timestamptz not null default now();
+alter table public.platform_connections add column if not exists updated_at            timestamptz not null default now();
+
+alter table public.campaign_urls add column if not exists title        text not null default '';
+alter table public.campaign_urls add column if not exists original_url text not null default '';
+alter table public.campaign_urls add column if not exists short_url    text;
+alter table public.campaign_urls add column if not exists slug         text;
+alter table public.campaign_urls add column if not exists clicks       integer not null default 0;
+alter table public.campaign_urls add column if not exists tags         text[] not null default '{}';
+alter table public.campaign_urls add column if not exists is_active    boolean not null default true;
+alter table public.campaign_urls add column if not exists deleted_at   timestamptz;
+alter table public.campaign_urls add column if not exists campaign_id  uuid;
+
+alter table public.campaigns add column if not exists description     text;
+alter table public.campaigns add column if not exists platforms       text[] not null default '{}';
+alter table public.campaigns add column if not exists url_ids         text[] not null default '{}';
+alter table public.campaigns add column if not exists frequency       text;
+alter table public.campaigns add column if not exists start_date      date;
+alter table public.campaigns add column if not exists end_date        date;
+alter table public.campaigns add column if not exists timezone        text not null default 'UTC';
+alter table public.campaigns add column if not exists url_count       integer not null default 0;
+alter table public.campaigns add column if not exists scheduled_posts integer not null default 0;
+alter table public.campaigns add column if not exists published_posts integer not null default 0;
+alter table public.campaigns add column if not exists failed_posts    integer not null default 0;
+alter table public.campaigns add column if not exists success_rate    numeric not null default 0;
+alter table public.campaigns add column if not exists updated_at      timestamptz not null default now();
+
+alter table public.system_logs add column if not exists level    text not null default 'info';
+alter table public.system_logs add column if not exists campaign text not null default '';
+alter table public.system_logs add column if not exists platform text not null default '';
+alter table public.system_logs add column if not exists post_id  text;
+
 alter table public.platform_connections enable row level security;
 
 drop policy if exists "Users manage own connections" on public.platform_connections;
@@ -113,3 +153,6 @@ create policy "Users view own logs"
   for all
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
+
+-- Force PostgREST to reload the schema cache so new columns are visible immediately
+notify pgrst, 'reload schema';
