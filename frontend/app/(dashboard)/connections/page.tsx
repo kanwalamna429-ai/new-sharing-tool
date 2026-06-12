@@ -128,6 +128,7 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
   const [revealed, setRevealed]           = useState<Record<string, boolean>>({})
   const [saving, setSaving]               = useState(false)
   const [errors, setErrors]               = useState<Record<string, string>>({})
+  const [apiError, setApiError]           = useState<string | null>(null)
 
   const reset = useCallback(() => {
     setValues({})
@@ -136,6 +137,7 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
     setInstanceUrl(initialData?.instanceUrl ?? "")
     setRevealed({})
     setErrors({})
+    setApiError(null)
     setSaving(false)
   }, [initialData])
 
@@ -183,7 +185,7 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const msg = body.detail ?? body.error ?? "Failed to save connection"
-        setErrors({ accountHandle: msg })
+        setApiError(msg)
         setSaving(false)
         return
       }
@@ -193,7 +195,7 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
       reset()
       onSave(mapApiToLocal(saved))
     } catch {
-      setErrors({ accountHandle: "Network error — please try again" })
+      setApiError("Network error — please try again")
       setSaving(false)
     }
   }
@@ -220,6 +222,13 @@ function CredentialDialog({ platform, open, initialData, onClose, onSave }: Cred
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {/* API-level error banner */}
+          {apiError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {apiError}
+            </div>
+          )}
+
           {/* Instance URL — federated platforms only */}
           {requiresInstance && (
             <div className="space-y-1.5">
