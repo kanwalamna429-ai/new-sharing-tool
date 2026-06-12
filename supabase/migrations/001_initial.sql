@@ -1,6 +1,6 @@
 -- ============================================================
 -- PostFlow — Initial Schema
--- Run this in the Supabase SQL Editor to set up all tables.
+-- Safe to re-run: uses IF NOT EXISTS / DROP IF EXISTS.
 -- ============================================================
 
 -- ----------------------------------------------------------------
@@ -23,6 +23,7 @@ create table if not exists public.campaign_urls (
 
 alter table public.campaign_urls enable row level security;
 
+drop policy if exists "Users manage own urls" on public.campaign_urls;
 create policy "Users manage own urls"
   on public.campaign_urls
   for all
@@ -55,6 +56,7 @@ create table if not exists public.campaigns (
 
 alter table public.campaigns enable row level security;
 
+drop policy if exists "Users manage own campaigns" on public.campaigns;
 create policy "Users manage own campaigns"
   on public.campaigns
   for all
@@ -82,6 +84,7 @@ create table if not exists public.platform_connections (
 
 alter table public.platform_connections enable row level security;
 
+drop policy if exists "Users manage own connections" on public.platform_connections;
 create policy "Users manage own connections"
   on public.platform_connections
   for all
@@ -104,6 +107,7 @@ create table if not exists public.system_logs (
 
 alter table public.system_logs enable row level security;
 
+drop policy if exists "Users view own logs" on public.system_logs;
 create policy "Users view own logs"
   on public.system_logs
   for all
