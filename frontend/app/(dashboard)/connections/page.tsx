@@ -38,6 +38,7 @@ import {
   EyeOff,
   ExternalLink,
   Loader2,
+  Database,
 } from "lucide-react"
 
 // ---------------------------------------------------------------------------
@@ -440,6 +441,7 @@ function RemoveDialog({ connection, onClose, onConfirm }: RemoveDialogProps) {
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<LocalConnection[]>([])
   const [loadingConnections, setLoadingConnections] = useState(true)
+  const [migrationNeeded, setMigrationNeeded] = useState(false)
 
   // Dialog state
   const [pickerOpen,   setPickerOpen]   = useState(false)
@@ -451,9 +453,19 @@ export default function ConnectionsPage() {
   // Load connections from API on mount
   useEffect(() => {
     fetch("/api/connections")
-      .then((r) => r.json())
-      .then(({ connections: data }) => {
-        if (Array.isArray(data)) setConnections(data.map(mapApiToLocal))
+      .then(async (r) => {
+        const body = await r.json()
+        if (!r.ok) {
+          const detail: string = body.detail ?? body.error ?? ""
+          const isMissing =
+            detail.toLowerCase().includes("does not exist") ||
+            detail.toLowerCase().includes("relation") ||
+            detail.toLowerCase().includes("42p01")
+          if (isMissing) setMigrationNeeded(true)
+          else console.error("[connections] API error:", detail)
+          return
+        }
+        if (Array.isArray(body.connections)) setConnections(body.connections.map(mapApiToLocal))
       })
       .catch((err) => console.error("[connections] load failed:", err))
       .finally(() => setLoadingConnections(false))
@@ -522,6 +534,25 @@ export default function ConnectionsPage() {
       <Header title="Platform Connections" />
 
       <main className="flex-1 p-4 lg:p-6 space-y-6">
+
+        {/* Migration needed banner */}
+        {migrationNeeded && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-4 flex gap-3">
+            <Database className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Database tables not found — run the SQL migration
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Open your Supabase project → SQL Editor → paste and run{" "}
+                <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 rounded">
+                  supabase/migrations/001_initial.sql
+                </code>{" "}
+                from this repo, then reload this page.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-3">

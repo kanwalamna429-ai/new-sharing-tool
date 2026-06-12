@@ -1,1 +1,2 @@
-- [Next.js 16 proxy convention](nextjs16-proxy.md) — middleware.ts renamed to proxy.ts; export must be named `proxy` not `middleware`
+- [Turbopack require() pitfall](turbopack-require.md) — dynamic require("@/lib/...") silently returns undefined under Next.js 16 Turbopack; always use static import.
+- [Migration banner pattern](migration-banner.md) — detect missing tables via error.message containing "does not exist"/"42P01"; surface a banner rather than silently falling back.

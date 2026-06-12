@@ -50,7 +50,8 @@ export async function GET() {
     return NextResponse.json({ connections: data ?? [] })
   } catch (err) {
     console.error("[api/connections] GET failed:", err)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    const detail = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: "Internal server error", detail }, { status: 500 })
   }
 }
 
@@ -124,6 +125,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ connection: saved })
   } catch (err) {
     console.error("[api/connections] POST failed:", err)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    const detail = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: "Internal server error", detail }, { status: 500 })
   }
 }

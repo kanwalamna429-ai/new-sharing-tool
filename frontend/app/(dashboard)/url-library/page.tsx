@@ -35,6 +35,7 @@ import {
   MousePointerClick,
   Link2,
   Trash2,
+  Database,
 } from "lucide-react"
 
 const PAGE_SIZE = 10
@@ -42,7 +43,7 @@ const PAGE_SIZE = 10
 const EMPTY_FORM = { title: "", originalUrl: "", tags: "" }
 
 export default function UrlLibraryPage() {
-  const { urls, loading, addUrls, removeUrl, clearAll } = useUrlStore()
+  const { urls, loading, addUrls, removeUrl, clearAll, dbError } = useUrlStore()
 
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
@@ -123,6 +124,29 @@ export default function UrlLibraryPage() {
       <Header title="URL Library" />
 
       <main className="flex-1 p-4 lg:p-6 space-y-4">
+
+        {/* ---- Migration needed banner ---- */}
+        {dbError && (
+          dbError.toLowerCase().includes("does not exist") ||
+          dbError.toLowerCase().includes("relation") ||
+          dbError.toLowerCase().includes("42p01")
+        ) && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-4 flex gap-3">
+            <Database className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Database tables not found — run the SQL migration
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Open your Supabase project → SQL Editor → paste and run{" "}
+                <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 rounded">
+                  supabase/migrations/001_initial.sql
+                </code>{" "}
+                from this repo, then reload this page.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* ---- Top bar ---- */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
